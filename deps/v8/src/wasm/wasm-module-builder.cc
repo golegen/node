@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/signature.h"
+#include "src/codegen/signature.h"
 
-#include "src/handles.h"
-#include "src/objects-inl.h"
-#include "src/v8.h"
+#include "src/handles/handles.h"
+#include "src/init/v8.h"
+#include "src/objects/objects-inl.h"
 #include "src/zone/zone-containers.h"
 
 #include "src/wasm/function-body-decoder.h"
@@ -16,7 +16,7 @@
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-opcodes.h"
 
-#include "src/v8memory.h"
+#include "src/base/memory.h"
 
 namespace v8 {
 namespace internal {
@@ -171,6 +171,16 @@ void WasmFunctionBuilder::SetAsmFunctionStartPosition(
   last_asm_source_position_ = function_position_u32;
 }
 
+void WasmFunctionBuilder::SetCompilationHint(
+    WasmCompilationHintStrategy strategy, WasmCompilationHintTier baseline,
+    WasmCompilationHintTier top_tier) {
+  uint8_t hint_byte = static_cast<uint8_t>(strategy) |
+                      static_cast<uint8_t>(baseline) << 2 |
+                      static_cast<uint8_t>(top_tier) << 4;
+  DCHECK_NE(hint_byte, kNoCompilationHint);
+  hint_ = hint_byte;
+}
+
 void WasmFunctionBuilder::DeleteCodeAfter(size_t position) {
   DCHECK_LE(position, body_.size());
   body_.Truncate(position);
@@ -275,6 +285,7 @@ void WasmModuleBuilder::SetIndirectFunction(uint32_t indirect,
 
 uint32_t WasmModuleBuilder::AddImport(Vector<const char> name,
                                       FunctionSig* sig) {
+  DCHECK(adding_imports_allowed_);
   function_imports_.push_back({name, AddSignature(sig)});
   return static_cast<uint32_t>(function_imports_.size() - 1);
 }
@@ -291,7 +302,18 @@ void WasmModuleBuilder::MarkStartFunction(WasmFunctionBuilder* function) {
 
 void WasmModuleBuilder::AddExport(Vector<const char> name,
                                   WasmFunctionBuilder* function) {
-  function_exports_.push_back({name, function->func_index()});
+  DCHECK(function->func_index() <= std::numeric_limits<int>::max());
+  function_exports_.push_back({name, static_cast<int>(function->func_index())});
+}
+
+void WasmModuleBuilder::AddExportedImport(Vector<const char> name,
+                                          int import_index) {
+#if DEBUG
+  // The size of function_imports_ must not change any more.
+  adding_imports_allowed_ = false;
+#endif
+  function_exports_.push_back(
+      {name, import_index - static_cast<int>(function_imports_.size())});
 }
 
 uint32_t WasmModuleBuilder::AddGlobal(ValueType type, bool exported,
@@ -361,7 +383,7 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
   if (functions_.size() > 0) {
     size_t start = EmitSection(kFunctionSectionCode, buffer);
     buffer.write_size(functions_.size());
-    for (auto function : functions_) {
+    for (auto* function : functions_) {
       function->WriteSignature(buffer);
       if (!function->name_.empty()) ++num_function_names;
     }
@@ -498,11 +520,37 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     FixupSection(buffer, start);
   }
 
+  // == emit compilation hints section =========================================
+  bool emit_compilation_hints = false;
+  for (auto* fn : functions_) {
+    if (fn->hint_ != kNoCompilationHint) {
+      emit_compilation_hints = true;
+      break;
+    }
+  }
+  if (emit_compilation_hints) {
+    // Emit the section code.
+    buffer.write_u8(kUnknownSectionCode);
+    // Emit a placeholder for section length.
+    size_t start = buffer.reserve_u32v();
+    // Emit custom section name.
+    buffer.write_string(CStrVector("compilationHints"));
+    // Emit hint count.
+    buffer.write_size(functions_.size());
+    // Emit hint bytes.
+    for (auto* fn : functions_) {
+      uint8_t hint_byte =
+          fn->hint_ != kNoCompilationHint ? fn->hint_ : kDefaultCompilationHint;
+      buffer.write_u8(hint_byte);
+    }
+    FixupSection(buffer, start);
+  }
+
   // == emit code ==============================================================
   if (functions_.size() > 0) {
     size_t start = EmitSection(kCodeSectionCode, buffer);
     buffer.write_size(functions_.size());
-    for (auto function : functions_) {
+    for (auto* function : functions_) {
       function->WriteBody(buffer);
     }
     FixupSection(buffer, start);
@@ -531,8 +579,7 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     // Emit a placeholder for the length.
     size_t start = buffer.reserve_u32v();
     // Emit the section string.
-    buffer.write_size(4);
-    buffer.write(reinterpret_cast<const byte*>("name"), 4);
+    buffer.write_string(CStrVector("name"));
     // Emit a subsection for the function names.
     buffer.write_u8(NameSectionKindCode::kFunction);
     // Emit a placeholder for the subsection length.
@@ -549,7 +596,7 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
       buffer.write_string(import->name);
     }
     if (num_function_names > 0) {
-      for (auto function : functions_) {
+      for (auto* function : functions_) {
         DCHECK_EQ(function_index,
                   function->func_index() + function_imports_.size());
         if (!function->name_.empty()) {
@@ -568,7 +615,7 @@ void WasmModuleBuilder::WriteAsmJsOffsetTable(ZoneBuffer& buffer) const {
   // == Emit asm.js offset table ===============================================
   buffer.write_size(functions_.size());
   // Emit the offset table per function.
-  for (auto function : functions_) {
+  for (auto* function : functions_) {
     function->WriteAsmWasmOffsetTable(buffer);
   }
   // Append a 0 to indicate that this is an encoded table.
