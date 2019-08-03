@@ -36,6 +36,23 @@ termination, such as calling [`process.exit()`][] or uncaught exceptions.
 The `'beforeExit'` should *not* be used as an alternative to the `'exit'` event
 unless the intention is to schedule additional work.
 
+```js
+process.on('beforeExit', (code) => {
+  console.log('Process beforeExit event with code: ', code);
+});
+
+process.on('exit', (code) => {
+  console.log('Process exit event with code: ', code);
+});
+
+console.log('This message is displayed first.');
+
+// Prints:
+// This message is displayed first.
+// Process beforeExit event with code: 0
+// Process exit event with code: 0
+```
+
 ### Event: 'disconnect'
 <!-- YAML
 added: v0.7.7
@@ -1684,6 +1701,8 @@ relied upon to exist.
 added: v11.8.0
 -->
 
+> Stability: 1 - Experimental
+
 * {Object}
 
 `process.report` is an object whose methods are used to generate diagnostic
@@ -1694,6 +1713,8 @@ reports for the current process. Additional documentation is available in the
 <!-- YAML
 added: v11.12.0
 -->
+
+> Stability: 1 - Experimental
 
 * {string}
 
@@ -1710,6 +1731,8 @@ console.log(`Report directory is ${process.report.directory}`);
 added: v11.12.0
 -->
 
+> Stability: 1 - Experimental
+
 * {string}
 
 Filename where the report is written. If set to the empty string, the output
@@ -1725,15 +1748,22 @@ console.log(`Report filename is ${process.report.filename}`);
 added: v11.8.0
 -->
 
-* `err` {Error} A custom error used for reporting the JavaScript stack.
-* Returns: {string}
+> Stability: 1 - Experimental
 
-Returns a JSON-formatted diagnostic report for the running process. The report's
-JavaScript stack trace is taken from `err`, if present.
+* `err` {Error} A custom error used for reporting the JavaScript stack.
+* Returns: {Object}
+
+Returns a JavaScript Object representation of a diagnostic report for the
+running process. The report's JavaScript stack trace is taken from `err`, if
+present.
 
 ```js
 const data = process.report.getReport();
-console.log(data);
+console.log(data.header.nodeJsVersion);
+
+// Similar to process.report.writeReport()
+const fs = require('fs');
+fs.writeFileSync(util.inspect(data), 'my-report.log', 'utf8');
 ```
 
 Additional documentation is available in the [report documentation][].
@@ -1742,6 +1772,8 @@ Additional documentation is available in the [report documentation][].
 <!-- YAML
 added: v11.12.0
 -->
+
+> Stability: 1 - Experimental
 
 * {boolean}
 
@@ -1757,6 +1789,8 @@ console.log(`Report on fatal error: ${process.report.reportOnFatalError}`);
 added: v11.12.0
 -->
 
+> Stability: 1 - Experimental
+
 * {boolean}
 
 If `true`, a diagnostic report is generated when the process receives the
@@ -1771,6 +1805,8 @@ console.log(`Report on signal: ${process.report.reportOnSignal}`);
 added: v11.12.0
 -->
 
+> Stability: 1 - Experimental
+
 * {boolean}
 
 If `true`, a diagnostic report is generated on uncaught exception.
@@ -1783,6 +1819,8 @@ console.log(`Report on exception: ${process.report.reportOnUncaughtException}`);
 <!-- YAML
 added: v11.12.0
 -->
+
+> Stability: 1 - Experimental
 
 * {string}
 
@@ -1797,6 +1835,8 @@ console.log(`Report signal: ${process.report.signal}`);
 <!-- YAML
 added: v11.8.0
 -->
+
+> Stability: 1 - Experimental
 
 * `filename` {string} Name of the file where the report is written. This
   should be a relative path, that will be appended to the directory specified in

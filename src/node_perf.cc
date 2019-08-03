@@ -229,9 +229,8 @@ void SetupPerformanceObservers(const FunctionCallbackInfo<Value>& args) {
 }
 
 // Creates a GC Performance Entry and passes it to observers
-void PerformanceGCCallback(Environment* env, void* ptr) {
-  std::unique_ptr<GCPerformanceEntry> entry{
-      static_cast<GCPerformanceEntry*>(ptr)};
+void PerformanceGCCallback(Environment* env,
+                           std::unique_ptr<GCPerformanceEntry> entry) {
   HandleScope scope(env->isolate());
   Local<Context> context = env->context();
 
@@ -268,13 +267,14 @@ void MarkGarbageCollectionEnd(Isolate* isolate,
   // If no one is listening to gc performance entries, do not create them.
   if (!state->observers[NODE_PERFORMANCE_ENTRY_TYPE_GC])
     return;
-  GCPerformanceEntry* entry =
-      new GCPerformanceEntry(env,
-                             static_cast<PerformanceGCKind>(type),
-                             state->performance_last_gc_start_mark,
-                             PERFORMANCE_NOW());
-  env->SetUnrefImmediate(PerformanceGCCallback,
-                         entry);
+  auto entry = std::make_unique<GCPerformanceEntry>(
+      env,
+      static_cast<PerformanceGCKind>(type),
+      state->performance_last_gc_start_mark,
+      PERFORMANCE_NOW());
+  env->SetUnrefImmediate([entry = std::move(entry)](Environment* env) mutable {
+    PerformanceGCCallback(env, std::move(entry));
+  });
 }
 
 static void SetupGarbageCollectionTracking(
@@ -365,6 +365,21 @@ void Timerify(const FunctionCallbackInfo<Value>& args) {
       Function::New(context, TimerFunctionCall, fn, length).ToLocalChecked();
   args.GetReturnValue().Set(wrap);
 }
+
+// Notify a custom PerformanceEntry to observers
+void Notify(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Utf8Value type(env->isolate(), args[0]);
+  Local<Value> entry = args[1];
+  PerformanceEntryType entry_type = ToPerformanceEntryTypeEnum(*type);
+  AliasedUint32Array& observers = env->performance_state()->observers;
+  if (entry_type != NODE_PERFORMANCE_ENTRY_TYPE_INVALID &&
+      observers[entry_type]) {
+    USE(env->performance_entry_callback()->
+      Call(env->context(), Undefined(env->isolate()), 1, &entry));
+  }
+}
+
 
 // Event Loop Timing Histogram
 namespace {
@@ -562,6 +577,7 @@ void Initialize(Local<Object> target,
   env->SetMethod(target, "timerify", Timerify);
   env->SetMethod(
       target, "setupGarbageCollectionTracking", SetupGarbageCollectionTracking);
+  env->SetMethod(target, "notify", Notify);
 
   Local<Object> constants = Object::New(isolate);
 

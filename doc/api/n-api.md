@@ -192,20 +192,48 @@ napi_value create_addon(napi_env env);
 ```C
 // addon.c
 #include "addon.h"
+
+#define NAPI_CALL(env, call)                                      \
+  do {                                                            \
+    napi_status status = (call);                                  \
+    if (status != napi_ok) {                                      \
+      const napi_extended_error_info* error_info = NULL;          \
+      napi_get_last_error_info((env), &error_info);               \
+      bool is_pending;                                            \
+      napi_is_exception_pending((env), &is_pending);              \
+      if (!is_pending) {                                          \
+        const char* message = (error_info->error_message == NULL) \
+            ? "empty error message"                               \
+            : error_info->error_message;                          \
+        napi_throw_error((env), NULL, message);                   \
+        return NULL;                                              \
+      }                                                           \
+    }                                                             \
+  } while(0)
+
+static napi_value
+DoSomethingUseful(napi_env env, napi_callback_info info) {
+  // Do something useful.
+  return NULL;
+}
+
 napi_value create_addon(napi_env env) {
   napi_value result;
-  assert(napi_create_object(env, &result) == napi_ok);
+  NAPI_CALL(env, napi_create_object(env, &result));
+
   napi_value exported_function;
-  assert(napi_create_function(env,
-                              "doSomethingUseful",
-                              NAPI_AUTO_LENGTH,
-                              DoSomethingUseful,
-                              NULL,
-                              &exported_function) == napi_ok);
-  assert(napi_set_named_property(env,
-                                 result,
-                                 "doSomethingUseful",
-                                 exported_function) == napi_ok);
+  NAPI_CALL(env, napi_create_function(env,
+                                      "doSomethingUseful",
+                                      NAPI_AUTO_LENGTH,
+                                      DoSomethingUseful,
+                                      NULL,
+                                      &exported_function));
+
+  NAPI_CALL(env, napi_set_named_property(env,
+                                         result,
+                                         "doSomethingUseful",
+                                         exported_function));
+
   return result;
 }
 ```
@@ -213,13 +241,91 @@ napi_value create_addon(napi_env env) {
 ```C
 // addon_node.c
 #include <node_api.h>
+#include "addon.h"
 
-static napi_value Init(napi_env env, napi_value exports) {
+NAPI_MODULE_INIT() {
+  // This function body is expected to return a `napi_value`.
+  // The variables `napi_env env` and `napi_value exports` may be used within
+  // the body, as they are provided by the definition of `NAPI_MODULE_INIT()`.
   return create_addon(env);
 }
-
-NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 ```
+
+## Environment Life Cycle APIs
+
+> Stability: 1 - Experimental
+
+[Section 8.7][] of the [ECMAScript Language Specification][] defines the concept
+of an "Agent" as a self-contained environment in which JavaScript code runs.
+Multiple such Agents may be started and terminated either concurrently or in
+sequence by the process.
+
+A Node.js environment corresponds to an ECMAScript Agent. In the main process,
+an environment is created at startup, and additional environments can be created
+on separate threads to serve as [worker threads][]. When Node.js is embedded in
+another application, the main thread of the application may also construct and
+destroy a Node.js environment multiple times during the life cycle of the
+application process such that each Node.js environment created by the
+application may, in turn, during its life cycle create and destroy additional
+environments as worker threads.
+
+From the perspective of a native addon this means that the bindings it provides
+may be called multiple times, from multiple contexts, and even concurrently from
+multiple threads.
+
+Native addons may need to allocate global state of which they make use during
+their entire life cycle such that the state must be unique to each instance of
+the addon.
+
+To this env, N-API provides a way to allocate data such that its life cycle is
+tied to the life cycle of the Agent.
+
+### napi_set_instance_data
+<!-- YAML
+added: REPLACEME
+-->
+
+```C
+napi_status napi_set_instance_data(napi_env env,
+                                   void* data,
+                                   napi_finalize finalize_cb,
+                                   void* finalize_hint);
+```
+
+- `[in] env`: The environment that the N-API call is invoked under.
+- `[in] data`: The data item to make available to bindings of this instance.
+- `[in] finalize_cb`: The function to call when the environment is being torn
+down. The function receives `data` so that it might free it.
+- `[in] finalize_hint`: Optional hint to pass to the finalize callback
+during collection.
+
+Returns `napi_ok` if the API succeeded.
+
+This API associates `data` with the currently running Agent. `data` can later
+be retrieved using `napi_get_instance_data()`. Any existing data associated with
+the currently running Agent which was set by means of a previous call to
+`napi_set_instance_data()` will be overwritten. If a `finalize_cb` was provided
+by the previous call, it will not be called.
+
+### napi_get_instance_data
+<!-- YAML
+added: REPLACEME
+-->
+
+```C
+napi_status napi_get_instance_data(napi_env env,
+                                   void** data);
+```
+
+- `[in] env`: The environment that the N-API call is invoked under.
+- `[out] data`: The data item that was previously associated with the currently
+running Agent by a call to `napi_set_instance_data()`.
+
+Returns `napi_ok` if the API succeeded.
+
+This API retrieves data that was previously associated with the currently
+running Agent via `napi_set_instance_data()`. If no data is set, the call will
+succeed and `data` will be set to `NULL`.
 
 ## Basic N-API Data Types
 
@@ -433,6 +539,8 @@ Implementations of this type of function should avoid making any N-API calls
 that could result in the execution of JavaScript or interaction with
 JavaScript objects. Most often, any code that needs to make N-API
 calls should be made in `napi_async_complete_callback` instead.
+Avoid using the `napi_env` parameter in the execute callback as
+it will likely execute JavaScript.
 
 #### napi_async_complete_callback
 <!-- YAML
@@ -3998,6 +4106,8 @@ The `execute` function should avoid making any N-API calls
 that could result in the execution of JavaScript or interaction with
 JavaScript objects. Most often, any code that needs to make N-API
 calls should be made in `complete` callback instead.
+Avoid using the `napi_env` parameter in the execute callback as
+it will likely execute JavaScript.
 
 These functions implement the following interfaces:
 
@@ -4542,8 +4652,6 @@ NAPI_EXTERN napi_status napi_get_uv_event_loop(napi_env env,
 <!--lint disable no-unused-definitions remark-lint-->
 ## Asynchronous Thread-safe Function Calls
 
-> Stability: 1 - Experimental
-
 JavaScript functions can normally only be called from a native addon's main
 thread. If an addon creates additional threads, then N-API functions that
 require a `napi_env`, `napi_value`, or `napi_ref` must not be called from those
@@ -4844,6 +4952,7 @@ This API may only be called from the main thread.
 [Section 6.1.4]: https://tc39.github.io/ecma262/#sec-ecmascript-language-types-string-type
 [Section 6.1.6]: https://tc39.github.io/ecma262/#sec-ecmascript-language-types-number-type
 [Section 6.1.7.1]: https://tc39.github.io/ecma262/#table-2
+[Section 8.7]: https://tc39.es/ecma262/#sec-agents
 [Section 9.1.6]: https://tc39.github.io/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots-defineownproperty-p-desc
 [Working with JavaScript Functions]: #n_api_working_with_javascript_functions
 [Working with JavaScript Properties]: #n_api_working_with_javascript_properties
@@ -4898,3 +5007,4 @@ This API may only be called from the main thread.
 [`uv_unref`]: http://docs.libuv.org/en/v1.x/handle.html#c.uv_unref
 [async_hooks `type`]: async_hooks.html#async_hooks_type
 [context-aware addons]: addons.html#addons_context_aware_addons
+[worker threads]: https://nodejs.org/api/worker_threads.html

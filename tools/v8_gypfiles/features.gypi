@@ -102,9 +102,6 @@
     # Sets -dENABLE_GDB_JIT_INTERFACE.
     'v8_enable_gdbjit%': 0,
 
-    # Sets -dENABLE_VTUNE_JIT_INTERFACE.
-    'v8_enable_vtunejit%': 0,
-
     # Currently set for node by common.gypi, avoiding default because of gyp file bug.
     # Should be turned on only for debugging.
     #'v8_enable_handle_zapping%': 0,
@@ -116,7 +113,7 @@
     'v8_enable_embedded_builtins%': 1,
 
     # Enable the registration of unwinding info for Windows/x64.
-    'v8_win64_unwinding_info%': 0,
+    'v8_win64_unwinding_info%': 1,
 
     # Enable code comments for builtins in the snapshot (impacts performance).
     'v8_enable_snapshot_code_comments%': 0,
@@ -224,9 +221,6 @@
       }],
       ['v8_enable_gdbjit==1', {
         'defines': ['ENABLE_GDB_JIT_INTERFACE',],
-      }],
-      ['v8_enable_vtunejit==1', {
-        'defines': ['ENABLE_VTUNE_JIT_INTERFACE',],
       }],
       ['v8_enable_minor_mc==1', {
         'defines': ['ENABLE_MINOR_MC',],

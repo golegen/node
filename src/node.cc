@@ -64,10 +64,6 @@
 #include "inspector/worker_inspector.h"  // ParentInspectorHandle
 #endif
 
-#ifdef NODE_ENABLE_VTUNE_PROFILING
-#include "../deps/v8/src/third_party/vtune/v8-vtune.h"
-#endif
-
 #ifdef NODE_ENABLE_LARGE_CODE_PAGES
 #include "large_pages/node_large_page.h"
 #endif
@@ -258,7 +254,7 @@ int Environment::InitializeInspector(
 
   profiler::StartProfilers(this);
 
-  if (options_->debug_options().break_node_first_line) {
+  if (inspector_agent_->options().break_node_first_line) {
     inspector_agent_->PauseOnNextJavascriptStatement("Break at bootstrap");
   }
 
@@ -786,6 +782,9 @@ int InitializeNodeWithArgs(std::vector<std::string>* argv,
   // Make sure InitializeNodeWithArgs() is called only once.
   CHECK(!init_called.exchange(true));
 
+  // Initialize node_start_time to get relative uptime.
+  per_process::node_start_time = uv_hrtime();
+
   // Register built-in modules
   binding::RegisterBuiltinModules();
 
@@ -946,7 +945,8 @@ void Init(int* argc,
   }
 
   if (per_process::cli_options->print_v8_help) {
-    V8::SetFlagsFromString("--help", 6);  // Doesn't return.
+    // Doesn't return.
+    V8::SetFlagsFromString("--help", static_cast<size_t>(6));
     UNREACHABLE();
   }
 
@@ -965,7 +965,6 @@ void Init(int* argc,
 InitializationResult InitializeOncePerProcess(int argc, char** argv) {
   atexit(ResetStdio);
   PlatformInit();
-  per_process::node_start_time = uv_hrtime();
 
   CHECK_GT(argc, 0);
 
@@ -1004,7 +1003,8 @@ InitializationResult InitializeOncePerProcess(int argc, char** argv) {
   }
 
   if (per_process::cli_options->print_v8_help) {
-    V8::SetFlagsFromString("--help", 6);  // Doesn't return.
+    // Doesn't return.
+    V8::SetFlagsFromString("--help", static_cast<size_t>(6));
     UNREACHABLE();
   }
 
@@ -1052,16 +1052,21 @@ int Start(int argc, char** argv) {
 
   {
     Isolate::CreateParams params;
-    // TODO(joyeecheung): collect external references and set it in
-    // params.external_references.
-    std::vector<intptr_t> external_references = {
-        reinterpret_cast<intptr_t>(nullptr)};
-    v8::StartupData* blob = NodeMainInstance::GetEmbeddedSnapshotBlob();
-    const std::vector<size_t>* indexes =
-        NodeMainInstance::GetIsolateDataIndexes();
-    if (blob != nullptr) {
-      params.external_references = external_references.data();
-      params.snapshot_blob = blob;
+    const std::vector<size_t>* indexes = nullptr;
+    std::vector<intptr_t> external_references;
+
+    bool force_no_snapshot =
+        per_process::cli_options->per_isolate->no_node_snapshot;
+    if (!force_no_snapshot) {
+      v8::StartupData* blob = NodeMainInstance::GetEmbeddedSnapshotBlob();
+      if (blob != nullptr) {
+        // TODO(joyeecheung): collect external references and set it in
+        // params.external_references.
+        external_references.push_back(reinterpret_cast<intptr_t>(nullptr));
+        params.external_references = external_references.data();
+        params.snapshot_blob = blob;
+        indexes = NodeMainInstance::GetIsolateDataIndexes();
+      }
     }
 
     NodeMainInstance main_instance(&params,

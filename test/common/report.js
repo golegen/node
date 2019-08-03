@@ -4,6 +4,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const util = require('util');
+const cpus = os.cpus();
 
 function findReports(pid, dir) {
   // Default filenames are of the form
@@ -21,24 +23,31 @@ function findReports(pid, dir) {
   return results;
 }
 
-function validate(report) {
-  const data = fs.readFileSync(report, 'utf8');
-
-  validateContent(data);
+function validate(filepath) {
+  validateContent(JSON.parse(fs.readFileSync(filepath, 'utf8')));
 }
 
-function validateContent(data) {
+function validateContent(report) {
+  if (typeof report === 'string') {
+    try {
+      report = JSON.parse(report);
+    } catch {
+      throw new TypeError(
+        'validateContent() expects a JSON string or JavaScript Object');
+    }
+  }
   try {
-    _validateContent(data);
+    _validateContent(report);
   } catch (err) {
-    err.stack += `\n------\nFailing Report:\n${data}`;
+    try {
+      err.stack += util.format('\n------\nFailing Report:\n%O', report);
+    } catch {}
     throw err;
   }
 }
 
-function _validateContent(data) {
+function _validateContent(report) {
   const isWindows = process.platform === 'win32';
-  const report = JSON.parse(data);
 
   // Verify that all sections are present as own properties of the report.
   const sections = ['header', 'javascriptStack', 'nativeStack',
@@ -90,6 +99,7 @@ function _validateContent(data) {
   assert.strictEqual(typeof header.osVersion, 'string');
   assert.strictEqual(typeof header.osMachine, 'string');
   assert(Array.isArray(header.cpus));
+  assert.strictEqual(header.cpus.length, cpus.length);
   header.cpus.forEach((cpu) => {
     assert.strictEqual(typeof cpu.model, 'string');
     assert.strictEqual(typeof cpu.speed, 'number');
@@ -98,6 +108,9 @@ function _validateContent(data) {
     assert.strictEqual(typeof cpu.sys, 'number');
     assert.strictEqual(typeof cpu.idle, 'number');
     assert.strictEqual(typeof cpu.irq, 'number');
+    assert(cpus.some((c) => {
+      return c.model === cpu.model;
+    }));
   });
   assert.strictEqual(header.host, os.hostname());
 

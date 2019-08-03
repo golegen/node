@@ -55,6 +55,7 @@ namespace node {
 
 namespace contextify {
 class ContextifyScript;
+class CompiledFnEntry;
 }
 
 namespace fs {
@@ -99,6 +100,8 @@ struct PackageConfig {
   const HasMain has_main;
   const std::string main;
   const PackageType type;
+
+  v8::Global<v8::Value> exports;
 };
 }  // namespace loader
 
@@ -149,7 +152,6 @@ constexpr size_t kFsStatsBufferLength =
   V(contextify_context_private_symbol, "node:contextify:context")             \
   V(contextify_global_private_symbol, "node:contextify:global")               \
   V(decorated_private_symbol, "node:decorated")                               \
-  V(napi_env, "node:napi:env")                                                \
   V(napi_wrapper, "node:napi:wrapper")                                        \
   V(sab_lifetimepartner_symbol, "node:sharedArrayBufferLifetimePartner")      \
 
@@ -177,6 +179,7 @@ constexpr size_t kFsStatsBufferLength =
   V(cached_data_produced_string, "cachedDataProduced")                         \
   V(cached_data_rejected_string, "cachedDataRejected")                         \
   V(cached_data_string, "cachedData")                                          \
+  V(cache_key_string, "cacheKey")                                              \
   V(change_string, "change")                                                   \
   V(channel_string, "channel")                                                 \
   V(chunks_sent_since_last_write_string, "chunksSentSinceLastWrite")           \
@@ -374,6 +377,7 @@ constexpr size_t kFsStatsBufferLength =
   V(as_callback_data_template, v8::FunctionTemplate)                           \
   V(async_wrap_ctor_template, v8::FunctionTemplate)                            \
   V(async_wrap_object_ctor_template, v8::FunctionTemplate)                     \
+  V(compiled_fn_entry_template, v8::ObjectTemplate)                            \
   V(fd_constructor_template, v8::ObjectTemplate)                               \
   V(fdclose_constructor_template, v8::ObjectTemplate)                          \
   V(filehandlereadwrap_template, v8::ObjectTemplate)                           \
@@ -484,6 +488,8 @@ class IsolateData : public MemoryRetainer {
   inline v8::Isolate* isolate() const;
   IsolateData(const IsolateData&) = delete;
   IsolateData& operator=(const IsolateData&) = delete;
+  IsolateData(IsolateData&&) = delete;
+  IsolateData& operator=(IsolateData&&) = delete;
 
  private:
   void DeserializeProperties(const std::vector<size_t>* indexes);
@@ -516,12 +522,6 @@ struct ContextInfo {
   const std::string name;
   std::string origin;
   bool is_default = false;
-};
-
-struct CompileFnEntry {
-  Environment* env;
-  uint32_t id;
-  CompileFnEntry(Environment* env, uint32_t id);
 };
 
 // Listing the AsyncWrap provider types first enables us to cast directly
@@ -574,6 +574,12 @@ class AsyncRequest : public MemoryRetainer {
  public:
   AsyncRequest() = default;
   ~AsyncRequest();
+
+  AsyncRequest(const AsyncRequest&) = delete;
+  AsyncRequest& operator=(const AsyncRequest&) = delete;
+  AsyncRequest(AsyncRequest&&) = delete;
+  AsyncRequest& operator=(AsyncRequest&&) = delete;
+
   void Install(Environment* env, void* data, uv_async_cb target);
   void Uninstall();
   void Stop();
@@ -594,6 +600,13 @@ class AsyncRequest : public MemoryRetainer {
 
 class KVStore {
  public:
+  KVStore() = default;
+  virtual ~KVStore() = default;
+  KVStore(const KVStore&) = delete;
+  KVStore& operator=(const KVStore&) = delete;
+  KVStore(KVStore&&) = delete;
+  KVStore& operator=(KVStore&&) = delete;
+
   virtual v8::Local<v8::String> Get(v8::Isolate* isolate,
                                     v8::Local<v8::String> key) const = 0;
   virtual void Set(v8::Isolate* isolate,
@@ -658,6 +671,9 @@ class AsyncHooks : public MemoryRetainer {
 
   AsyncHooks(const AsyncHooks&) = delete;
   AsyncHooks& operator=(const AsyncHooks&) = delete;
+  AsyncHooks(AsyncHooks&&) = delete;
+  AsyncHooks& operator=(AsyncHooks&&) = delete;
+  ~AsyncHooks() = default;
 
   // Used to set the kDefaultTriggerAsyncId in a scope. This is instead of
   // passing the trigger_async_id along with other constructor arguments.
@@ -671,6 +687,9 @@ class AsyncHooks : public MemoryRetainer {
 
     DefaultTriggerAsyncIdScope(const DefaultTriggerAsyncIdScope&) = delete;
     DefaultTriggerAsyncIdScope& operator=(const DefaultTriggerAsyncIdScope&) =
+        delete;
+    DefaultTriggerAsyncIdScope(DefaultTriggerAsyncIdScope&&) = delete;
+    DefaultTriggerAsyncIdScope& operator=(DefaultTriggerAsyncIdScope&&) =
         delete;
 
    private:
@@ -701,6 +720,8 @@ class AsyncCallbackScope {
   ~AsyncCallbackScope();
   AsyncCallbackScope(const AsyncCallbackScope&) = delete;
   AsyncCallbackScope& operator=(const AsyncCallbackScope&) = delete;
+  AsyncCallbackScope(AsyncCallbackScope&&) = delete;
+  AsyncCallbackScope& operator=(AsyncCallbackScope&&) = delete;
 
  private:
   Environment* env_;
@@ -719,6 +740,9 @@ class ImmediateInfo : public MemoryRetainer {
 
   ImmediateInfo(const ImmediateInfo&) = delete;
   ImmediateInfo& operator=(const ImmediateInfo&) = delete;
+  ImmediateInfo(ImmediateInfo&&) = delete;
+  ImmediateInfo& operator=(ImmediateInfo&&) = delete;
+  ~ImmediateInfo() = default;
 
   SET_MEMORY_INFO_NAME(ImmediateInfo)
   SET_SELF_SIZE(ImmediateInfo)
@@ -745,6 +769,9 @@ class TickInfo : public MemoryRetainer {
 
   TickInfo(const TickInfo&) = delete;
   TickInfo& operator=(const TickInfo&) = delete;
+  TickInfo(TickInfo&&) = delete;
+  TickInfo& operator=(TickInfo&&) = delete;
+  ~TickInfo() = default;
 
  private:
   friend class Environment;  // So we can call the constructor.
@@ -779,6 +806,12 @@ class ShouldNotAbortOnUncaughtScope {
   explicit inline ShouldNotAbortOnUncaughtScope(Environment* env);
   inline void Close();
   inline ~ShouldNotAbortOnUncaughtScope();
+  ShouldNotAbortOnUncaughtScope(const ShouldNotAbortOnUncaughtScope&) = delete;
+  ShouldNotAbortOnUncaughtScope& operator=(
+      const ShouldNotAbortOnUncaughtScope&) = delete;
+  ShouldNotAbortOnUncaughtScope(ShouldNotAbortOnUncaughtScope&&) = delete;
+  ShouldNotAbortOnUncaughtScope& operator=(ShouldNotAbortOnUncaughtScope&&) =
+      delete;
 
  private:
   Environment* env_;
@@ -818,6 +851,8 @@ class Environment : public MemoryRetainer {
  public:
   Environment(const Environment&) = delete;
   Environment& operator=(const Environment&) = delete;
+  Environment(Environment&&) = delete;
+  Environment& operator=(Environment&&) = delete;
 
   SET_MEMORY_INFO_NAME(Environment)
 
@@ -973,8 +1008,7 @@ class Environment : public MemoryRetainer {
   std::unordered_map<uint32_t, loader::ModuleWrap*> id_to_module_map;
   std::unordered_map<uint32_t, contextify::ContextifyScript*>
       id_to_script_map;
-  std::unordered_set<CompileFnEntry*> compile_fn_entries;
-  std::unordered_map<uint32_t, v8::Global<v8::Function>> id_to_function_map;
+  std::unordered_map<uint32_t, contextify::CompiledFnEntry*> id_to_function_map;
 
   inline uint32_t get_next_module_id();
   inline uint32_t get_next_script_id();
@@ -988,6 +1022,9 @@ class Environment : public MemoryRetainer {
 
   inline double* heap_space_statistics_buffer() const;
   inline void set_heap_space_statistics_buffer(double* pointer);
+
+  inline double* heap_code_statistics_buffer() const;
+  inline void set_heap_code_statistics_buffer(double* pointer);
 
   inline char* http_parser_buffer() const;
   inline void set_http_parser_buffer(char* buffer);
@@ -1138,15 +1175,15 @@ class Environment : public MemoryRetainer {
     return current_value;
   }
 
-  typedef void (*native_immediate_callback)(Environment* env, void* data);
-  // cb will be called as cb(env, data) on the next event loop iteration.
-  // obj will be kept alive between now and after the callback has run.
-  inline void SetImmediate(native_immediate_callback cb,
-                           void* data,
-                           v8::Local<v8::Object> obj = v8::Local<v8::Object>());
-  inline void SetUnrefImmediate(native_immediate_callback cb,
-                                void* data,
-                                v8::Local<v8::Object> obj =
+  // cb will be called as cb(env) on the next event loop iteration.
+  // keep_alive will be kept alive between now and after the callback has run.
+  template <typename Fn>
+  inline void SetImmediate(Fn&& cb,
+                           v8::Local<v8::Object> keep_alive =
+                               v8::Local<v8::Object>());
+  template <typename Fn>
+  inline void SetUnrefImmediate(Fn&& cb,
+                                v8::Local<v8::Object> keep_alive =
                                     v8::Local<v8::Object>());
   // This needs to be available for the JS-land setImmediate().
   void ToggleImmediateRef(bool ref);
@@ -1211,9 +1248,9 @@ class Environment : public MemoryRetainer {
 #endif  // HAVE_INSPECTOR
 
  private:
-  inline void CreateImmediate(native_immediate_callback cb,
-                              void* data,
-                              v8::Local<v8::Object> obj,
+  template <typename Fn>
+  inline void CreateImmediate(Fn&& cb,
+                              v8::Local<v8::Object> keep_alive,
                               bool ref);
 
   inline void ThrowError(v8::Local<v8::Value> (*fun)(v8::Local<v8::String>),
@@ -1311,6 +1348,7 @@ class Environment : public MemoryRetainer {
 
   double* heap_statistics_buffer_ = nullptr;
   double* heap_space_statistics_buffer_ = nullptr;
+  double* heap_code_statistics_buffer_ = nullptr;
 
   char* http_parser_buffer_ = nullptr;
   bool http_parser_buffer_in_use_ = false;
@@ -1336,13 +1374,38 @@ class Environment : public MemoryRetainer {
 
   std::list<ExitCallback> at_exit_functions_;
 
-  struct NativeImmediateCallback {
-    native_immediate_callback cb_;
-    void* data_;
-    v8::Global<v8::Object> keep_alive_;
+  class NativeImmediateCallback {
+   public:
+    explicit inline NativeImmediateCallback(bool refed);
+
+    virtual ~NativeImmediateCallback() = default;
+    virtual void Call(Environment* env) = 0;
+
+    inline bool is_refed() const;
+    inline std::unique_ptr<NativeImmediateCallback> get_next();
+    inline void set_next(std::unique_ptr<NativeImmediateCallback> next);
+
+   private:
     bool refed_;
+    std::unique_ptr<NativeImmediateCallback> next_;
   };
-  std::vector<NativeImmediateCallback> native_immediate_callbacks_;
+
+  template <typename Fn>
+  class NativeImmediateCallbackImpl final : public NativeImmediateCallback {
+   public:
+    NativeImmediateCallbackImpl(Fn&& callback,
+                                v8::Global<v8::Object>&& keep_alive,
+                                bool refed);
+    void Call(Environment* env) override;
+
+   private:
+    Fn callback_;
+    v8::Global<v8::Object> keep_alive_;
+  };
+
+  std::unique_ptr<NativeImmediateCallback> native_immediate_callbacks_head_;
+  NativeImmediateCallback* native_immediate_callbacks_tail_ = nullptr;
+
   void RunAndClearNativeImmediates();
   static void CheckImmediate(uv_check_t* handle);
 

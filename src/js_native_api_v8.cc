@@ -305,12 +305,10 @@ class Reference : private Finalizer {
   static void SecondPassCallback(const v8::WeakCallbackInfo<Reference>& data) {
     Reference* reference = data.GetParameter();
 
-    napi_env env = reference->_env;
-
     if (reference->_finalize_callback != nullptr) {
-      NapiCallIntoModuleThrow(env, [&]() {
+      reference->_env->CallIntoModuleThrow([&](napi_env env) {
         reference->_finalize_callback(
-            reference->_env,
+            env,
             reference->_finalize_data,
             reference->_finalize_hint);
       });
@@ -452,7 +450,9 @@ class CallbackWrapperBase : public CallbackWrapper {
     napi_callback cb = _bundle->*FunctionField;
 
     napi_value result;
-    NapiCallIntoModuleThrow(env, [&]() { result = cb(env, cbinfo_wrapper); });
+    env->CallIntoModuleThrow([&](napi_env env) {
+      result = cb(env, cbinfo_wrapper);
+    });
 
     if (result != nullptr) {
       this->SetReturnValue(result);
@@ -684,14 +684,16 @@ napi_status napi_get_last_error_info(napi_env env,
   CHECK_ENV(env);
   CHECK_ARG(env, result);
 
-  // you must update this assert to reference the last message
-  // in the napi_status enum each time a new error message is added.
+  // The value of the constant below must be updated to reference the last
+  // message in the `napi_status` enum each time a new error message is added.
   // We don't have a napi_status_last as this would result in an ABI
   // change each time a message was added.
+  const int last_status = napi_date_expected;
+
   static_assert(
-      NAPI_ARRAYSIZE(error_messages) == napi_date_expected + 1,
+      NAPI_ARRAYSIZE(error_messages) == last_status + 1,
       "Count of error messages must match count of error values");
-  CHECK_LE(env->last_error.error_code, napi_callback_scope_mismatch);
+  CHECK_LE(env->last_error.error_code, last_status);
 
   // Wait until someone requests the last error information to fetch the error
   // message string
@@ -2981,6 +2983,29 @@ napi_status napi_adjust_external_memory(napi_env env,
 
   *adjusted_value = env->isolate->AdjustAmountOfExternalAllocatedMemory(
       change_in_bytes);
+
+  return napi_clear_last_error(env);
+}
+
+napi_status napi_set_instance_data(napi_env env,
+                                   void* data,
+                                   napi_finalize finalize_cb,
+                                   void* finalize_hint) {
+  CHECK_ENV(env);
+
+  env->instance_data.data = data;
+  env->instance_data.finalize_cb = finalize_cb;
+  env->instance_data.hint = finalize_hint;
+
+  return napi_clear_last_error(env);
+}
+
+napi_status napi_get_instance_data(napi_env env,
+                                   void** data) {
+  CHECK_ENV(env);
+  CHECK_ARG(env, data);
+
+  *data = env->instance_data.data;
 
   return napi_clear_last_error(env);
 }

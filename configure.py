@@ -47,7 +47,7 @@ parser = optparse.OptionParser()
 valid_os = ('win', 'mac', 'solaris', 'freebsd', 'openbsd', 'linux',
             'android', 'aix', 'cloudabi')
 valid_arch = ('arm', 'arm64', 'ia32', 'mips', 'mipsel', 'mips64el', 'ppc',
-              'ppc64', 'x32','x64', 'x86', 'x86_64', 's390', 's390x')
+              'ppc64', 'x32','x64', 'x86', 'x86_64', 's390x')
 valid_arm_float_abi = ('soft', 'softfp', 'hard')
 valid_arm_fpu = ('vfp', 'vfpv3', 'vfpv3-d16', 'neon')
 valid_mips_arch = ('loongson', 'r1', 'r2', 'r6', 'rx')
@@ -130,13 +130,6 @@ parser.add_option("--partly-static",
     dest="partly_static",
     help="Generate an executable with libgcc and libstdc++ libraries. This "
          "will not work on OSX when using the default compilation environment")
-
-parser.add_option("--enable-vtune-profiling",
-    action="store_true",
-    dest="enable_vtune_profiling",
-    help="Enable profiling support for Intel VTune profiler to profile "
-         "JavaScript code executed in nodejs. This feature is only available "
-         "for x32, x86, and x64 architectures.")
 
 parser.add_option("--enable-pgo-generate",
     action="store_true",
@@ -407,7 +400,7 @@ parser.add_option('--use-largepages',
     action='store_true',
     dest='node_use_large_pages',
     help='build with Large Pages support. This feature is supported only on Linux kernel' +
-         '>= 2.6.38 with Transparent Huge pages enabled')
+         '>= 2.6.38 with Transparent Huge pages enabled and FreeBSD')
 
 intl_optgroup.add_option('--with-intl',
     action='store',
@@ -874,7 +867,6 @@ def host_arch_cc():
     '__PPC64__'   : 'ppc64',
     '__PPC__'     : 'ppc64',
     '__x86_64__'  : 'x64',
-    '__s390__'    : 's390',
     '__s390x__'   : 's390x',
   }
 
@@ -883,8 +875,7 @@ def host_arch_cc():
   for i in matchup:
     if i in k and k[i] != '0':
       rtn = matchup[i]
-      if rtn != 's390':
-        break
+      break
 
   if rtn == 'mipsel' and '_LP64' in k:
     rtn = 'mips64el'
@@ -992,15 +983,6 @@ def configure_node(o):
   if flavor == 'aix':
     o['variables']['node_target_type'] = 'static_library'
 
-  if target_arch in ('x86', 'x64', 'ia32', 'x32'):
-    o['variables']['node_enable_v8_vtunejit'] = b(options.enable_vtune_profiling)
-  elif options.enable_vtune_profiling:
-    raise Exception(
-       'The VTune profiler for JavaScript is only supported on x32, x86, and x64 '
-       'architectures.')
-  else:
-    o['variables']['node_enable_v8_vtunejit'] = 'false'
-
   if flavor != 'linux' and (options.enable_pgo_generate or options.enable_pgo_use):
     raise Exception(
       'The pgo option is supported only on linux.')
@@ -1055,22 +1037,23 @@ def configure_node(o):
   else:
     o['variables']['node_use_dtrace'] = 'false'
 
-  if options.node_use_large_pages and flavor != 'linux':
+  if options.node_use_large_pages and not flavor in ('linux', 'freebsd'):
     raise Exception(
       'Large pages are supported only on Linux Systems.')
-  if options.node_use_large_pages and flavor == 'linux':
+  if options.node_use_large_pages and flavor in ('linux', 'freebsd'):
     if options.shared or options.enable_static:
       raise Exception(
         'Large pages are supported only while creating node executable.')
     if target_arch!="x64":
       raise Exception(
         'Large pages are supported only x64 platform.')
-    # Example full version string: 2.6.32-696.28.1.el6.x86_64
-    FULL_KERNEL_VERSION=os.uname()[2]
-    KERNEL_VERSION=FULL_KERNEL_VERSION.split('-')[0]
-    if KERNEL_VERSION < "2.6.38":
-      raise Exception(
-        'Large pages need Linux kernel version >= 2.6.38')
+    if flavor == 'linux':
+      # Example full version string: 2.6.32-696.28.1.el6.x86_64
+      FULL_KERNEL_VERSION=os.uname()[2]
+      KERNEL_VERSION=FULL_KERNEL_VERSION.split('-')[0]
+      if KERNEL_VERSION < "2.6.38" and flavor == 'linux':
+        raise Exception(
+          'Large pages need Linux kernel version >= 2.6.38')
   o['variables']['node_use_large_pages'] = b(options.node_use_large_pages)
 
   if options.no_ifaddrs:

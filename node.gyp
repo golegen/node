@@ -21,7 +21,6 @@
     'node_use_openssl%': 'true',
     'node_shared_openssl%': 'false',
     'node_v8_options%': '',
-    'node_enable_v8_vtunejit%': 'false',
     'node_core_target_name%': 'node',
     'node_lib_target_name%': 'libnode',
     'node_intermediate_lib_type%': 'static_library',
@@ -170,7 +169,7 @@
       'lib/internal/process/report.js',
       'lib/internal/process/task_queues.js',
       'lib/internal/querystring.js',
-      'lib/internal/readline.js',
+      'lib/internal/readline/utils.js',
       'lib/internal/repl.js',
       'lib/internal/repl/await.js',
       'lib/internal/repl/history.js',
@@ -223,7 +222,6 @@
       'deps/node-inspect/lib/internal/inspect_repl.js',
       'deps/acorn/acorn/dist/acorn.js',
       'deps/acorn/acorn-walk/dist/walk.js',
-      'deps/acorn-plugins/acorn-bigint/index.js',
       'deps/acorn-plugins/acorn-class-fields/index.js',
       'deps/acorn-plugins/acorn-numeric-separator/index.js',
       'deps/acorn-plugins/acorn-private-class-elements/index.js',
@@ -688,6 +686,12 @@
       'msvs_disabled_warnings!': [4244],
 
       'conditions': [
+        [ 'node_shared=="true"', {
+          'sources': [
+            'src/node_snapshot_stub.cc',
+            'src/node_code_cache_stub.cc',
+          ]
+        }],
         [ 'node_shared=="true" and node_module_version!="" and OS!="win"', {
           'product_extension': '<(shlib_suffix)',
           'xcode_settings': {
@@ -813,7 +817,7 @@
             }],
           ],
         }],
-        [ 'node_use_large_pages=="true" and OS=="linux"', {
+        [ 'node_use_large_pages=="true" and OS in "linux freebsd"', {
           'defines': [ 'NODE_ENABLE_LARGE_CODE_PAGES=1' ],
           # The current implementation of Large Pages is under Linux.
           # Other implementations are possible but not currently supported.
